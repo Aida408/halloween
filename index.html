@@ -76,6 +76,11 @@ body.glitch #gl{ filter:contrast(1.6) saturate(0) brightness(1.3); transform:tra
 @keyframes pop{ 0%{ color:#e44; transform:scale(1.3); } 100%{ color:#f2f2ea; transform:scale(1); } }
 .turnbtn{ position:fixed; z-index:45; left:50%; translate:-50% 0; bottom:calc(env(safe-area-inset-bottom,0px) + 22vh); background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.25); color:#cfcdc6; font-family:var(--hud); font-size:20px; padding:.35rem .9rem; cursor:pointer; }
 @media (min-width:700px){ .turnbtn{ left:auto; right:22px; translate:none; bottom:calc(env(safe-area-inset-bottom,0px) + 60px); } }
+.pad{ position:fixed; z-index:46; left:18px; bottom:calc(env(safe-area-inset-bottom,0px) + 54px); display:flex; align-items:center; gap:8px; touch-action:none; }
+.pad .col{ display:flex; flex-direction:column; gap:8px; }
+.pad button{ width:58px; height:58px; border-radius:50%; background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.3); color:#ddd; font-size:20px; touch-action:none; -webkit-user-select:none; user-select:none; }
+.pad button.on{ background:rgba(255,255,255,.18); }
+@media (min-width:700px){ .turnbtn{ bottom:calc(env(safe-area-inset-bottom,0px) + 60px); } }
 .cross.aim{ width:14px; height:14px; background:transparent; border:2px solid rgba(255,255,255,.85); }
 
 /* the note */
@@ -135,7 +140,7 @@ body.glitch #gl{ filter:contrast(1.6) saturate(0) brightness(1.3); transform:tra
   <div class="bat" id="bat">BATTERY ▮▮▮▯</div>
   <div class="clock" id="clock">OCT 31 2026&nbsp;&nbsp;15:58:00</div>
   <div class="corner c1"></div><div class="corner c2"></div>
-  <div class="skulls" id="skullCount" hidden>SKULLS 0/3</div>
+  <div class="skulls" id="skullCount" hidden>SKULLS 0/2</div>
 </div>
 <div class="cross" id="cross"></div>
 <div class="sub" id="sub"></div>
@@ -145,6 +150,11 @@ body.glitch #gl{ filter:contrast(1.6) saturate(0) brightness(1.3); transform:tra
 <button class="mute" id="mute" hidden>SOUND ON</button>
 <button class="skip" id="skip" hidden>SKIP TO INVITATION</button>
 <button class="turnbtn" id="turn" hidden>↻ TURN AROUND</button>
+<div class="pad" id="pad" hidden>
+  <button data-k="left" aria-label="Turn left">◀</button>
+  <div class="col"><button data-k="fwd" aria-label="Walk forward">▲</button><button data-k="back" aria-label="Walk back">▼</button></div>
+  <button data-k="right" aria-label="Turn right">▶</button>
+</div>
 
 <div class="start" id="start">
   <div class="tape">TAPE 04 &nbsp;·&nbsp; APARTMENT 4B</div>
@@ -190,7 +200,7 @@ body.glitch #gl{ filter:contrast(1.6) saturate(0) brightness(1.3); transform:tra
         </div>
       </div>
       <span class="hand">come alone. it already knows your name.</span>
-      <span class="sign">— the three of us</span>
+      <span class="sign">— the two of us</span>
       <button class="again" id="again">Watch the tape again</button>
       <div class="ring"></div><div class="smudge"></div>
       <div class="flashlight"></div>
@@ -201,7 +211,7 @@ body.glitch #gl{ filter:contrast(1.6) saturate(0) brightness(1.3); transform:tra
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
-const SPEED = .6; // lower = faster story pacing
+const SPEED = .38; // lower = faster story pacing
 const wait = ms => new Promise(r => setTimeout(r, ms*SPEED));
 const rnd = (a,b) => a + Math.random()*(b-a);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -493,7 +503,7 @@ let renderer, scene, camera, flash, bulb, bulbMesh, chains, door, figure, figHea
 let specials = [], taking = [], found = 0, chainDrop = null, lastNext = '';
 const eyeGeo = new THREE.SphereGeometry(.075,10,8), eyeMat = new THREE.MeshBasicMaterial({ color:0xff2a14 }), hitMat = new THREE.MeshBasicMaterial({ visible:false });
 const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
-const DOOR_Z = -12, STOP_Z = -10.3, START_Z = 2.5;
+const DOOR_Z = -12, STOP_Z = -10.3, START_Z = .5;
 function build(){
   renderer = new THREE.WebGLRenderer({ canvas:$('#gl'), antialias:false });
   renderer.setPixelRatio(Math.min(devicePixelRatio||1, 1.5) * .7);
@@ -621,8 +631,28 @@ cv.addEventListener('pointermove', e=>{
   if (e.pointerType === 'mouse'){ lookX = (e.clientX/innerWidth - .5); lookY = (e.clientY/innerHeight - .5); }
   else if (down){ lookX = Math.max(-.6, Math.min(.6, down.lx + (e.clientX - down.x)/innerWidth*-1.2)); lookY = Math.max(-.4, Math.min(.4, down.ly + (e.clientY - down.y)/innerHeight*-1)); }
 });
-cv.addEventListener('pointerdown', e=>{ down = { x:e.clientX, y:e.clientY, lx:lookX, ly:lookY, t:Date.now() }; });
-cv.addEventListener('pointerup', e=>{ if (down && Math.hypot(e.clientX-down.x, e.clientY-down.y) < 10) action(e.clientX, e.clientY); down = null; });
+const keys = { fwd:0, back:0, left:0, right:0 }; let holdWalk = false, holdTimer = null, stepAcc = 0;
+const canMove = () => ['walk','search','return'].includes(phase);
+cv.addEventListener('pointerdown', e=>{
+  down = { x:e.clientX, y:e.clientY, lx:lookX, ly:lookY, t:Date.now(), moved:false };
+  clearTimeout(holdTimer);
+  if (canMove() && !pickSkull(e.clientX, e.clientY)) holdTimer = setTimeout(()=>{ if (down && !down.moved) holdWalk = true; }, 220);
+});
+cv.addEventListener('pointerup', e=>{
+  clearTimeout(holdTimer);
+  const wasHold = holdWalk; holdWalk = false;
+  if (down && !wasHold && Math.hypot(e.clientX-down.x, e.clientY-down.y) < 10) action(e.clientX, e.clientY);
+  down = null;
+});
+cv.addEventListener('pointercancel', ()=>{ clearTimeout(holdTimer); holdWalk = false; down = null; });
+cv.addEventListener('pointermove', e=>{ if (down && e.pointerType !== 'mouse' && Math.hypot(e.clientX-down.x, e.clientY-down.y) > 10){ down.moved = true; holdWalk = false; clearTimeout(holdTimer); } });
+document.querySelectorAll('#pad button').forEach(b=>{
+  const k = b.dataset.k, on = v => e => { e.preventDefault(); e.stopPropagation(); keys[k] = v; b.classList.toggle('on', !!v); };
+  b.addEventListener('pointerdown', on(1)); b.addEventListener('pointerup', on(0)); b.addEventListener('pointerleave', on(0)); b.addEventListener('pointercancel', on(0));
+});
+const KEYMAP = { KeyW:'fwd', ArrowUp:'fwd', KeyS:'back', ArrowDown:'back', KeyA:'left', ArrowLeft:'left', KeyD:'right', ArrowRight:'right' };
+addEventListener('keyup', e=>{ if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = 0; });
+addEventListener('blur', ()=>{ for (const k in keys) keys[k] = 0; holdWalk = false; });
 cv.addEventListener('pointermove', e=>{
   if (e.pointerType !== 'mouse' || !['search','return'].includes(phase)) return;
   const hit = pickSkull(e.clientX, e.clientY); $('#cross').classList.toggle('aim', !!hit); cv.style.cursor = hit ? 'pointer' : 'crosshair';
@@ -630,14 +660,15 @@ cv.addEventListener('pointermove', e=>{
 });
 addEventListener('keydown', e=>{
   if (phase === 'intro' || phase === 'invite') return;
-  if (['Space','Enter','KeyW','ArrowUp'].includes(e.code)){ e.preventDefault(); action(innerWidth/2, innerHeight/2); }
-  if (['KeyS','ArrowDown'].includes(e.code) && ['search','return'].includes(phase)){ e.preventDefault(); quickTurn(); }
+  if (KEYMAP[e.code]){ e.preventDefault(); keys[KEYMAP[e.code]] = 1; return; }
+  if (['Space','Enter','KeyE'].includes(e.code)){ e.preventDefault(); action(innerWidth/2, innerHeight/2); }
+  if (e.code === 'KeyQ' && ['search','return'].includes(phase)){ e.preventDefault(); quickTurn(); }
 });
 $('#turn').addEventListener('click', e=>{ e.stopPropagation(); quickTurn(); });
 
-const facingDoor = () => Math.cos(baseYaw) > 0;
+const facingDoor = () => Math.cos(camera.rotation.y) > 0;
 function walkStep(){
-  const dz = facingDoor() ? -1 : 1, nt = Math.max(STOP_Z, Math.min(9.5, targetZ + dz*2.4));
+  const dz = facingDoor() ? -1 : 1, nt = Math.max(STOP_Z, Math.min(9.5, targetZ + dz*3.2));
   if (Math.abs(nt - targetZ) < .01) return;
   targetZ = nt; walkT = 1.1; [0,380,760].forEach(d => setTimeout(()=>sfx('step'), d));
 }
@@ -648,7 +679,7 @@ function pickSkull(x, y){
   if (!hits.length || hits[0].distance > 6) return null;
   let o = hits[0].object; while (o && !o.userData.special) o = o.parent; return o;
 }
-const objective = () => found < 3 ? 'Find the 3 skulls with glowing red eyes' : 'Go back to the door';
+const objective = () => found < 2 ? 'Find the 2 skulls with glowing red eyes' : 'Go back to the door';
 let turning = false;
 function quickTurn(){
   if (turning) return; turning = true; const from = baseYaw, t0 = performance.now();
@@ -669,7 +700,7 @@ const SPOTS_FAR = [[-.8,3.6],[.85,6.4],[.3,5.2]];
 function placeSpecials(){
   specials.forEach(k => scene.remove(k)); taking.forEach(k => scene.remove(k.g)); specials = []; taking = [];
   const pick = a => a.splice(Math.floor(Math.random()*a.length),1)[0];
-  const near = SPOTS_NEAR.slice(), far = SPOTS_FAR.slice(), chosen = [pick(near), pick(near), pick(far)];
+  const near = SPOTS_NEAR.slice(), far = SPOTS_FAR.slice(), chosen = [pick(near), pick(far)];
   chosen.forEach(([x,z])=>{
     const k = makeSkull(rnd(.088,.1));
     if (x === 'shelf') k.position.set(1.1-.13, 1.355, z); else k.position.set(x, .09, z);
@@ -684,13 +715,10 @@ async function collect(k){
   const my = script;
   specials = specials.filter(o => o !== k); taking.push({ g:k, t:0, from:k.position.clone() });
   found++; sfx('take'); $('#cross').classList.remove('aim'); cv.style.cursor = 'crosshair';
-  lastNext = ''; const sc = $('#skullCount'); sc.textContent = `SKULLS ${found}/3`; sc.classList.remove('pop'); void sc.offsetWidth; sc.classList.add('pop');
+  lastNext = ''; const sc = $('#skullCount'); sc.textContent = `SKULLS ${found}/2`; sc.classList.remove('pop'); void sc.offsetWidth; sc.classList.add('pop');
   prompt('');
   if (found === 1){
-    bulbFlicker = 1.2; await wait(900); if (my !== script) return;
-    sfx('breath'); await say("Its teeth are wet.", 2400);
-  } else if (found === 2){
-    await wait(600); if (my !== script) return;
+    bulbFlicker = 1.2; sfx('breath'); await wait(600); if (my !== script) return;
     sfx('step',{far:true}); await wait(600); sfx('step',{far:true});
     const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion), fz = Math.max(-11, Math.min(12, camera.position.z + Math.sign(dir.z || -1)*7));
     flashOn = false; sfx('click'); await wait(500); if (my !== script) return;
@@ -715,32 +743,30 @@ async function begin(){
   $('#hud').classList.add('on'); $('#cross').classList.add('on'); $('#black').classList.remove('on','cut');
   $('#mute').hidden = false; $('#skip').hidden = false;
   found = 0; chainDrop = null; chains.position.set(0,0,DOOR_Z+.02); chains.rotation.set(0,0,0); chains.visible = true;
-  placeSpecials(); $('#skullCount').textContent = 'SKULLS 0/3'; $('#skullCount').hidden = true; $('#turn').hidden = true;
+  placeSpecials(); $('#skullCount').textContent = 'SKULLS 0/2'; $('#skullCount').hidden = true; $('#turn').hidden = true;
   clockStart = Date.now();
   await wait(1200); if (my !== script) return;
   await say('Apartment 4B. The invitation said it would be here.', 3200); if (my !== script) return;
-  prompt(`${ACT} to walk &nbsp;·&nbsp; ${isTouch ? 'Drag' : 'Move the mouse'} to look`);
-  await say("Why is it so quiet? Somebody should be here.", 3000);
+  prompt(isTouch ? 'Hold ▲ to walk &nbsp;·&nbsp; ◀ ▶ to turn &nbsp;·&nbsp; Drag to look' : '<kbd>W</kbd><kbd>S</kbd> walk &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> turn &nbsp;·&nbsp; Mouse to look &nbsp;·&nbsp; Hold click to walk');
+  if (isTouch) $('#pad').hidden = false;
 }
 async function reachedDoor(){
   snapDoor();
   const my = script; phase = 'atDoor-wait'; prompt('');
-  await say('The door is chained shut.', 2400); if (my !== script) return;
-  await say('...from this side.', 2200); if (my !== script) return;
-  await say("Something is scratched under the writing: 'bring back the three of us'.", 3600); if (my !== script) return;
+  await say('The door is chained shut... from this side.', 2600); if (my !== script) return;
+  await say("Something is scratched under the writing: 'bring back the two of us'.", 3600); if (my !== script) return;
   phase = 'search'; $('#skullCount').hidden = false; $('#turn').hidden = false;
   prompt(objective());
-  await say(isTouch ? 'Use the turn button to look behind you.' : 'Press S or the turn button to look behind you.', 3200);
+  await say(isTouch ? 'Turn with ◀ ▶ or the turn button.' : 'Turn with A / D, or Q to spin around.', 3000);
 }
 async function touchDoor(){
-  const my = script; phase = 'busy'; prompt(''); $('#turn').hidden = true; $('#cross').classList.remove('aim');
+  const my = script; phase = 'busy'; prompt(''); $('#turn').hidden = true; $('#pad').hidden = true; for (const k in keys) keys[k] = 0; holdWalk = false; $('#cross').classList.remove('aim');
   doorShake = .6; sfx('click'); setTimeout(()=>sfx('click'), 160);
   await wait(800); if (my !== script) return;
   await say("Still locked. There's something under the door... a note?", 2800); if (my !== script) return;
   await wait(400);
   sfx('knock'); doorShake = 1; setTimeout(()=>{ doorShake = 1; chainShake = .7; }, 380); setTimeout(()=>{ doorShake = 1; chainShake = .7; }, 760);
   await wait(1300); if (my !== script) return;
-  await say('...someone is inside.', 2200); if (my !== script) return;
   bulbFlicker = 2.2; await wait(1600); bulbOn = false; sfx('pop'); if (buzzGain) buzzGain.gain.value = 0;
   await wait(1400); if (my !== script) return;
   fall = { vx:-.55, vy:.4, vz:.15, hits:0 };
@@ -762,7 +788,6 @@ async function turnAround(){
   await wait(1800); sfx('heart'); await say('Is... someone there?', 2400); if (my !== script) return;
   const hop = async (z, off, on) => { flashOn = false; sfx('click'); await wait(off); figure.position.z = z; figure.position.x = rnd(-.3,.3); figHead.rotation.z = rnd(-.7,.7); figHead.rotation.x = rnd(.2,.7); flashOn = true; sfx('click'); sfx('heart'); await wait(on); };
   await hop(-2.5, 700, 1500); if (my !== script) return;
-  await hop(-6.2, 600, 1200); if (my !== script) return;
   sfx('breath');
   await hop(-8.4, 800, 900); if (my !== script) return;
   flashOn = false; sfx('click'); await wait(1100); if (my !== script) return;
@@ -775,7 +800,6 @@ async function turnAround(){
   await wait(reduced ? 300 : 520);
   $('#black').classList.add('cut','on'); figure.visible = false; document.body.classList.remove('shake'); $('#hud').classList.remove('on'); $('#cross').classList.remove('on');
   await wait(2600); if (my !== script) return;
-  await say('...', 1500); if (my !== script) return;
   await say('When I woke up, the note was in my hand.', 3000); if (my !== script) return;
   showInvite();
 }
@@ -791,6 +815,7 @@ function snapDoor(force){
   }catch(e){}
 }
 function showInvite(){
+  $('#pad').hidden = true; for (const k in keys) keys[k] = 0;
   if (!photo && renderer) snapDoor(true);
   if (photo) $('#photo').style.backgroundImage = `url(${photo})`;
   script++; $('#turn').hidden = true; $('#skullCount').hidden = true; phase = 'invite'; prompt(''); $('#sub').classList.remove('on');
@@ -817,8 +842,18 @@ function loop(now){
   if (renderer){
     // walking
     const before = camera.position.z;
-    camera.position.z += (targetZ - camera.position.z) * Math.min(1, dt*2.6);
-    const moving = Math.abs(targetZ - camera.position.z) > .02;
+    camera.position.z += (targetZ - camera.position.z) * Math.min(1, dt*3.4);
+    let inputMove = 0;
+    if (canMove() && !turning){
+      baseYaw += (keys.left - keys.right) * 2.1 * dt;
+      const f = (keys.fwd || holdWalk ? 1 : 0) - keys.back;
+      if (f){
+        const dz = -Math.cos(camera.rotation.y) * f * 3.0 * dt, nz = Math.max(STOP_Z, Math.min(9.5, camera.position.z + dz));
+        inputMove = Math.abs(nz - camera.position.z); camera.position.z = nz; targetZ = nz;
+        stepAcc += inputMove; if (stepAcc > .75){ stepAcc = 0; sfx('step'); }
+      }
+    }
+    const moving = inputMove > .0005 || Math.abs(targetZ - camera.position.z) > .02;
     walkT = moving ? walkT + dt*7 : walkT * .9;
     camera.position.y = 1.62 + (moving ? Math.sin(walkT*1.0)*.025 : 0) + Math.sin(now*.0011)*.006;
     camera.position.x = (moving ? Math.sin(walkT*.5)*.015 : 0);
@@ -827,11 +862,11 @@ function loop(now){
       if (near && !$('#prompt').innerHTML.includes('open the door')) prompt(txt); else if (!near && $('#prompt').innerHTML.includes('open the door')) prompt(objective()); }
     // glowing eyes + direction hint
     const pulse = .55 + .45*Math.sin(now*.004); eyeMat.color.setRGB(1*pulse+.2, .16*pulse, .08*pulse);
-    if (phase === 'search' && specials.length){
+    if (phase === 'search' && specials.length && found < 2){
       const fz = facingDoor() ? -1 : 1; let best = null;
       specials.forEach(k=>{ const d = Math.abs(k.position.z - camera.position.z); if (!best || d < best.d) best = { d, dz:k.position.z - camera.position.z }; });
       const nxt = best.d < 1.5 ? 'CLOSE' : (Math.sign(best.dz) === fz ? 'AHEAD' : 'BEHIND');
-      if (nxt !== lastNext){ lastNext = nxt; $('#skullCount').textContent = `SKULLS ${found}/3 · ${nxt}`; }
+      if (nxt !== lastNext){ lastNext = nxt; $('#skullCount').textContent = `SKULLS ${found}/2 · ${nxt}`; }
     }
     // skulls being taken
     taking = taking.filter(k=>{ k.t += dt/0.7; const e = Math.min(1,k.t), dst = camera.position.clone().add(new THREE.Vector3(0,-.35,-.4).applyQuaternion(camera.quaternion));
